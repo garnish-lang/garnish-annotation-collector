@@ -93,7 +93,9 @@ impl Collector {
                             },
                         }
                     }
-                    _ => (),
+                    // Not currently collecting annotation tokens
+                    // add to root
+                    _ =>  root_annotation.tokens.push(token.clone()),
                 },
                 Some((sink, info)) => {
                     if !sink
@@ -208,6 +210,24 @@ mod collecting {
                     LexerToken::new("5".to_string(), TokenType::Number, 0, 10),
                     LexerToken::new("   \n   ".to_string(), TokenType::Whitespace, 0, 11),
                 ])])
+        );
+    }
+
+    #[test]
+    fn non_annotation_tokens_added_to_root() {
+        let input = "@Test 5+5\n5+5\n@Test 10+10";
+        let collector = Collector::new(vec![Sink::new("@Test").newline()]);
+
+        let root_annotation = collector.collect(input).unwrap();
+
+        assert_eq!(
+            root_annotation.tokens,
+            vec![
+                LexerToken::new("5".to_string(), TokenType::Number, 1, 0),
+                LexerToken::new("+".to_string(), TokenType::PlusSign, 1, 1),
+                LexerToken::new("5".to_string(), TokenType::Number, 1, 2),
+                LexerToken::new("\n".to_string(), TokenType::Whitespace, 1, 3),
+            ]
         );
     }
 
