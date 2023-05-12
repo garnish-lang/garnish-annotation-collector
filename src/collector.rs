@@ -3,8 +3,9 @@ use garnish_lang_compiler::{lex, LexerToken, TokenType};
 #[derive(Debug, Eq, PartialEq, Clone)]
 enum EndCondition {
     Lone,
-    Count(usize),
-    Until(TokenType),
+    UntilNewline, // separate from Until because a newline in a Whitespace token needs a specific check
+    TokenCount(usize),
+    UntilToken(TokenType),
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
@@ -23,13 +24,18 @@ impl Sink {
         }
     }
 
-    pub fn tokens(mut self, count: usize) -> Self {
-        self.end_condition = EndCondition::Count(count);
+    pub fn token_count(mut self, count: usize) -> Self {
+        self.end_condition = EndCondition::TokenCount(count);
         self
     }
 
     pub fn until(mut self, token_type: TokenType) -> Self {
-        self.end_condition = EndCondition::Until(token_type);
+        self.end_condition = EndCondition::UntilToken(token_type);
+        self
+    }
+
+    pub fn newline(mut self) -> Self {
+        self.end_condition = EndCondition::UntilNewline;
         self
     }
 
@@ -90,23 +96,26 @@ impl Collector {
                     _ => (),
                 },
                 Some((sink, info)) => {
-                    if sink
+                    if !sink
                         .ignore_for_end_condition_list
                         .contains(&token.get_token_type())
                     {
-                        continue;
+                        info.non_ignored_token_count += 1;
                     }
 
                     info.tokens.push(token.clone());
 
                     let end = match sink.end_condition {
                         EndCondition::Lone => unreachable!(), // never added to stack
-                        EndCondition::Count(count) => info.tokens.len() >= count,
-                        EndCondition::Until(token_type) => token_type == token.get_token_type() && nest_level == info.nest_level,
+                        EndCondition::TokenCount(count) => info.non_ignored_token_count >= count,
+                        EndCondition::UntilToken(token_type) => {
+                            token_type == token.get_token_type() && nest_level == info.nest_level
+                        }
+                        EndCondition::UntilNewline => token.get_text().contains("\n"),
                     };
 
                     if end {
-                        let (_, info) = annotations_stack.pop().unwrap(); // has exist to get to this branch
+                        let (_, info) = annotations_stack.pop().unwrap(); // has to exist to get to this branch
                         match annotations_stack.last_mut() {
                             None => root_annotation.nested.push(info),
                             Some((_, parent)) => parent.nested.push(info),
@@ -126,6 +135,7 @@ pub struct AnnotationInfo {
     nested: Vec<AnnotationInfo>,
     tokens: Vec<LexerToken>,
     nest_level: usize,
+    non_ignored_token_count: usize,
 }
 
 impl AnnotationInfo {
@@ -139,6 +149,7 @@ impl AnnotationInfo {
             nested: vec![],
             tokens: vec![],
             nest_level,
+            non_ignored_token_count: 0,
         }
     }
 
@@ -149,6 +160,11 @@ impl AnnotationInfo {
 
     pub fn with_tokens(mut self, tokens: Vec<LexerToken>) -> Self {
         self.tokens = tokens;
+        self
+    }
+
+    pub fn significant_token_count(mut self, count: usize) -> Self {
+        self.non_ignored_token_count = count;
         self
     }
 }
@@ -168,54 +184,77 @@ mod collecting {
 
         assert_eq!(
             root_annotation,
-            AnnotationInfo::root()
-                .with_children(vec![AnnotationInfo::new("@Test".to_string(), 1)])
+            AnnotationInfo::root().with_children(vec![AnnotationInfo::new("@Test".to_string(), 1)])
+        );
+    }
+
+    #[test]
+    fn newline() {
+        let input = "@Test 5 + 5   \n   5 + 5";
+        let collector = Collector::new(vec![Sink::new("@Test").newline()]);
+
+        let root_annotation = collector.collect(input).unwrap();
+
+        assert_eq!(
+            root_annotation,
+            AnnotationInfo::root().with_children(vec![AnnotationInfo::new("@Test".to_string(), 1)
+                .significant_token_count(3)
+                .with_tokens(vec![
+                    LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 5),
+                    LexerToken::new("5".to_string(), TokenType::Number, 0, 6),
+                    LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 7),
+                    LexerToken::new("+".to_string(), TokenType::PlusSign, 0, 8),
+                    LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 9),
+                    LexerToken::new("5".to_string(), TokenType::Number, 0, 10),
+                    LexerToken::new("   \n   ".to_string(), TokenType::Whitespace, 0, 11),
+                ])])
         );
     }
 
     #[test]
     fn with_5_tokens() {
         let input = "@Test 5 + 5 + 5";
-        let collector = Collector::new(vec![Sink::new("@Test").tokens(5).ignore(vec![])]);
+        let collector = Collector::new(vec![Sink::new("@Test").token_count(5).ignore(vec![])]);
 
         let root_annotation = collector.collect(input).unwrap();
 
         assert_eq!(
             root_annotation,
-            AnnotationInfo::root().with_children(vec![AnnotationInfo::new(
-                "@Test".to_string(),
-                1
-            )
-            .with_tokens(vec![
-                LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 5),
-                LexerToken::new("5".to_string(), TokenType::Number, 0, 6),
-                LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 7),
-                LexerToken::new("+".to_string(), TokenType::PlusSign, 0, 8),
-                LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 9),
-            ])])
+            AnnotationInfo::root().with_children(vec![AnnotationInfo::new("@Test".to_string(), 1)
+                .significant_token_count(5)
+                .with_tokens(vec![
+                    LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 5),
+                    LexerToken::new("5".to_string(), TokenType::Number, 0, 6),
+                    LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 7),
+                    LexerToken::new("+".to_string(), TokenType::PlusSign, 0, 8),
+                    LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 9),
+                ])])
         );
     }
 
     #[test]
     fn with_5_tokens_ignoring_white_space() {
         let input = "@Test 5 + 5 + 5 + 5 + 5";
-        let collector = Collector::new(vec![Sink::new("@Test").tokens(5)]);
+        let collector = Collector::new(vec![Sink::new("@Test").token_count(5)]);
 
         let root_annotation = collector.collect(input).unwrap();
 
         assert_eq!(
             root_annotation,
-            AnnotationInfo::root().with_children(vec![AnnotationInfo::new(
-                "@Test".to_string(),
-                1
-            )
-            .with_tokens(vec![
-                LexerToken::new("5".to_string(), TokenType::Number, 0, 6),
-                LexerToken::new("+".to_string(), TokenType::PlusSign, 0, 8),
-                LexerToken::new("5".to_string(), TokenType::Number, 0, 10),
-                LexerToken::new("+".to_string(), TokenType::PlusSign, 0, 12),
-                LexerToken::new("5".to_string(), TokenType::Number, 0, 14),
-            ])])
+            AnnotationInfo::root().with_children(vec![AnnotationInfo::new("@Test".to_string(), 1)
+                .significant_token_count(5)
+                .with_tokens(vec![
+                    LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 5),
+                    LexerToken::new("5".to_string(), TokenType::Number, 0, 6),
+                    LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 7),
+                    LexerToken::new("+".to_string(), TokenType::PlusSign, 0, 8),
+                    LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 9),
+                    LexerToken::new("5".to_string(), TokenType::Number, 0, 10),
+                    LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 11),
+                    LexerToken::new("+".to_string(), TokenType::PlusSign, 0, 12),
+                    LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 13),
+                    LexerToken::new("5".to_string(), TokenType::Number, 0, 14),
+                ])])
         );
     }
 
@@ -228,46 +267,48 @@ mod collecting {
 
         assert_eq!(
             root_annotation,
-            AnnotationInfo::root().with_children(vec![AnnotationInfo::new(
-                "@Test".to_string(),
-                1
-            )
-            .with_tokens(vec![
-                LexerToken::new("{".to_string(), TokenType::StartExpression, 0, 6),
-                LexerToken::new("5".to_string(), TokenType::Number, 0, 8),
-                LexerToken::new("+".to_string(), TokenType::PlusSign, 0, 10),
-                LexerToken::new("5".to_string(), TokenType::Number, 0, 12),
-                LexerToken::new("}".to_string(), TokenType::EndExpression, 0, 14),
-            ])])
+            AnnotationInfo::root().with_children(vec![AnnotationInfo::new("@Test".to_string(), 1)
+                .significant_token_count(5)
+                .with_tokens(vec![
+                    LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 5),
+                    LexerToken::new("{".to_string(), TokenType::StartExpression, 0, 6),
+                    LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 7),
+                    LexerToken::new("5".to_string(), TokenType::Number, 0, 8),
+                    LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 9),
+                    LexerToken::new("+".to_string(), TokenType::PlusSign, 0, 10),
+                    LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 11),
+                    LexerToken::new("5".to_string(), TokenType::Number, 0, 12),
+                    LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 13),
+                    LexerToken::new("}".to_string(), TokenType::EndExpression, 0, 14),
+                ])])
         );
     }
 
     #[test]
     fn until_token_ignores_nested_matching_tokens() {
-        let input = "@Test { 5, { 5 + 5 }, 5 }";
+        let input = "@Test {5,{5+5},5}";
         let collector = Collector::new(vec![Sink::new("@Test").until(TokenType::EndExpression)]);
 
         let root_annotation = collector.collect(input).unwrap();
 
         assert_eq!(
             root_annotation,
-            AnnotationInfo::root().with_children(vec![AnnotationInfo::new(
-                "@Test".to_string(),
-                1
-            )
-            .with_tokens(vec![
-                LexerToken::new("{".to_string(), TokenType::StartExpression, 0, 6),
-                LexerToken::new("5".to_string(), TokenType::Number, 0, 8),
-                LexerToken::new(",".to_string(), TokenType::Comma, 0, 9),
-                LexerToken::new("{".to_string(), TokenType::StartExpression, 0, 11),
-                LexerToken::new("5".to_string(), TokenType::Number, 0, 13),
-                LexerToken::new("+".to_string(), TokenType::PlusSign, 0, 15),
-                LexerToken::new("5".to_string(), TokenType::Number, 0, 17),
-                LexerToken::new("}".to_string(), TokenType::EndExpression, 0, 19),
-                LexerToken::new(",".to_string(), TokenType::Comma, 0, 20),
-                LexerToken::new("5".to_string(), TokenType::Number, 0, 22),
-                LexerToken::new("}".to_string(), TokenType::EndExpression, 0, 24),
-            ])])
+            AnnotationInfo::root().with_children(vec![AnnotationInfo::new("@Test".to_string(), 1)
+                .significant_token_count(11)
+                .with_tokens(vec![
+                    LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 5),
+                    LexerToken::new("{".to_string(), TokenType::StartExpression, 0, 6),
+                    LexerToken::new("5".to_string(), TokenType::Number, 0, 7),
+                    LexerToken::new(",".to_string(), TokenType::Comma, 0, 8),
+                    LexerToken::new("{".to_string(), TokenType::StartExpression, 0, 9),
+                    LexerToken::new("5".to_string(), TokenType::Number, 0, 10),
+                    LexerToken::new("+".to_string(), TokenType::PlusSign, 0, 11),
+                    LexerToken::new("5".to_string(), TokenType::Number, 0, 12),
+                    LexerToken::new("}".to_string(), TokenType::EndExpression, 0, 13),
+                    LexerToken::new(",".to_string(), TokenType::Comma, 0, 14),
+                    LexerToken::new("5".to_string(), TokenType::Number, 0, 15),
+                    LexerToken::new("}".to_string(), TokenType::EndExpression, 0, 16),
+                ])])
         );
     }
 }
