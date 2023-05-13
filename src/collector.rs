@@ -448,4 +448,52 @@ mod collecting {
             ]
         );
     }
+
+    #[test]
+    fn with_children() {
+        let input = "@Test 5+5\n@Case 10+10\n@Case 20+20\n@End";
+        let collector = Collector::new(vec![
+            Sink::new("@Test").until_annotation("@End"),
+            Sink::new("@Case").newline(),
+        ]);
+
+        let blocks = collector.collect(input).unwrap();
+
+        assert_eq!(
+            blocks,
+            vec![TokenBlock::new(
+                "@Test".to_string(),
+                vec![
+                    LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 5),
+                    LexerToken::new("5".to_string(), TokenType::Number, 0, 6),
+                    LexerToken::new("+".to_string(), TokenType::PlusSign, 0, 7),
+                    LexerToken::new("5".to_string(), TokenType::Number, 0, 8),
+                    LexerToken::new("\n".to_string(), TokenType::Whitespace, 0, 9),
+                    LexerToken::new("@End".to_string(), TokenType::Annotation, 3, 0),
+                ]
+            )
+            .with_children(vec![
+                TokenBlock::new(
+                    "@Case".to_string(),
+                    vec![
+                        LexerToken::new(" ".to_string(), TokenType::Whitespace, 1, 5),
+                        LexerToken::new("10".to_string(), TokenType::Number, 1, 6),
+                        LexerToken::new("+".to_string(), TokenType::PlusSign, 1, 8),
+                        LexerToken::new("10".to_string(), TokenType::Number, 1, 9),
+                        LexerToken::new("\n".to_string(), TokenType::Whitespace, 1, 11),
+                    ]
+                ),
+                TokenBlock::new(
+                    "@Case".to_string(),
+                    vec![
+                        LexerToken::new(" ".to_string(), TokenType::Whitespace, 2, 5),
+                        LexerToken::new("20".to_string(), TokenType::Number, 2, 6),
+                        LexerToken::new("+".to_string(), TokenType::PlusSign, 2, 8),
+                        LexerToken::new("20".to_string(), TokenType::Number, 2, 9),
+                        LexerToken::new("\n".to_string(), TokenType::Whitespace, 2, 11),
+                    ]
+                )
+            ]),]
+        );
+    }
 }
