@@ -4,7 +4,7 @@ use garnish_lang_compiler::{lex, LexerToken, TokenType};
 enum EndCondition {
     Lone,
     UntilNewline, // separate from Until because a newline in a Whitespace token needs a specific check
-    TokenCount(usize),
+    Count(usize),
     UntilToken(TokenType),
     UntilAnnotation(String),
 }
@@ -25,8 +25,8 @@ impl Sink {
         }
     }
 
-    pub fn token_count(mut self, count: usize) -> Self {
-        self.end_condition = EndCondition::TokenCount(count);
+    pub fn count(mut self, count: usize) -> Self {
+        self.end_condition = EndCondition::Count(count);
         self
     }
 
@@ -56,6 +56,7 @@ struct CollectionData<'a> {
     block: TokenBlock,
     nest_level: usize,
     count: usize,
+    ended: bool,
 }
 
 impl<'a> CollectionData<'a> {
@@ -65,6 +66,7 @@ impl<'a> CollectionData<'a> {
             block,
             nest_level,
             count: 0,
+            ended: false,
         }
     }
 }
@@ -137,6 +139,7 @@ impl Collector {
                     block,
                     nest_level,
                     count,
+                    ended,
                 }) => {
                     if !sink
                         .ignore_for_end_condition_list
@@ -145,9 +148,9 @@ impl Collector {
                         *count += 1;
                     }
 
-                    let end = match &sink.end_condition {
+                    *ended = match &sink.end_condition {
                         EndCondition::Lone => unreachable!(), // never added to stack
-                        EndCondition::TokenCount(desired_count) => count == desired_count, // info.non_ignored_token_count >= count,
+                        EndCondition::Count(desired_count) => count == desired_count, // info.non_ignored_token_count >= count,
                         EndCondition::UntilToken(token_type) => {
                             token_type == &token.get_token_type()
                                 && nest_level == &current_nest_level
@@ -184,7 +187,13 @@ impl Collector {
                         _ => block.tokens.push(token.clone()),
                     }
 
-                    if end {
+                    // Possible to have multiple ended blocks in stack
+                    // loop until all have been popped
+                    while annotations_stack
+                        .last()
+                        .and_then(|b| Some(b.ended))
+                        .unwrap_or(false)
+                    {
                         let data = annotations_stack.pop().unwrap(); // has to exist to get to this branch
                         match annotations_stack.last_mut() {
                             None => blocks.push(data.block),
@@ -299,7 +308,7 @@ mod collecting {
     #[test]
     fn with_5_tokens_ignoring_white_space() {
         let input = "@Test 5 + 5 + 5 + 5 + 5";
-        let collector = Collector::new(vec![Sink::new("@Test").token_count(5)]);
+        let collector = Collector::new(vec![Sink::new("@Test").count(5)]);
 
         let blocks = collector.collect(input).unwrap();
 
@@ -494,6 +503,60 @@ mod collecting {
                     ]
                 )
             ]),]
+        );
+    }
+
+    #[test]
+    fn child_annotations_count_as_one_for_count_condition() {
+        let input = "@Test 5+5\n@Case 10+10\n@Case 20+20\n5+5";
+        let collector = Collector::new(vec![
+            Sink::new("@Test").count(5),
+            Sink::new("@Case").newline(),
+        ]);
+
+        let blocks = collector.collect(input).unwrap();
+
+        assert_eq!(
+            blocks,
+            vec![
+                TokenBlock::new(
+                    "@Test".to_string(),
+                    vec![
+                        LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 5),
+                        LexerToken::new("5".to_string(), TokenType::Number, 0, 6),
+                        LexerToken::new("+".to_string(), TokenType::PlusSign, 0, 7),
+                        LexerToken::new("5".to_string(), TokenType::Number, 0, 8),
+                        LexerToken::new("\n".to_string(), TokenType::Whitespace, 0, 9),
+                    ]
+                )
+                .with_children(vec![
+                    TokenBlock::new(
+                        "@Case".to_string(),
+                        vec![
+                            LexerToken::new(" ".to_string(), TokenType::Whitespace, 1, 5),
+                            LexerToken::new("10".to_string(), TokenType::Number, 1, 6),
+                            LexerToken::new("+".to_string(), TokenType::PlusSign, 1, 8),
+                            LexerToken::new("10".to_string(), TokenType::Number, 1, 9),
+                            LexerToken::new("\n".to_string(), TokenType::Whitespace, 1, 11),
+                        ]
+                    ),
+                    TokenBlock::new(
+                        "@Case".to_string(),
+                        vec![
+                            LexerToken::new(" ".to_string(), TokenType::Whitespace, 2, 5),
+                            LexerToken::new("20".to_string(), TokenType::Number, 2, 6),
+                            LexerToken::new("+".to_string(), TokenType::PlusSign, 2, 8),
+                            LexerToken::new("20".to_string(), TokenType::Number, 2, 9),
+                            LexerToken::new("\n".to_string(), TokenType::Whitespace, 2, 11),
+                        ]
+                    )
+                ]),
+                TokenBlock::tokens(vec![
+                    LexerToken::new("5".to_string(), TokenType::Number, 3, 0),
+                    LexerToken::new("+".to_string(), TokenType::PlusSign, 3, 1),
+                    LexerToken::new("5".to_string(), TokenType::Number, 3, 2),
+                ])
+            ]
         );
     }
 }
