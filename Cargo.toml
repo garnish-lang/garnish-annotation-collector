@@ -1,5 +1,5 @@
 [package]
-name = "garnish_annotations_processor"
+name = "garnish_annotations_collector"
 version = "0.1.0"
 edition = "2021"
 
