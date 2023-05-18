@@ -204,6 +204,15 @@ impl Collector {
             }
         }
 
+        // End all blocks with end of input
+        while let Some(data) = annotations_stack.pop()
+        {
+            match annotations_stack.last_mut() {
+                None => blocks.push(data.block),
+                Some(parent) => parent.block.nested.push(data.block),
+            }
+        }
+
         Ok(blocks)
     }
 }
@@ -399,6 +408,37 @@ mod collecting {
                         LexerToken::new("+".to_string(), TokenType::PlusSign, 0, 18),
                         LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 19),
                         LexerToken::new("5".to_string(), TokenType::Number, 0, 20),
+                    ]
+                )
+            ]
+        );
+    }
+
+    #[test]
+    fn unfinished_block_ended_with_end_of_input() {
+        let input = "@Test { 5 + 5 }";
+        let collector = Collector::new(vec![
+            Sink::new("@Test").until_token(TokenType::Subexpression)
+        ]);
+
+        let blocks = collector.collect_tokens(input).unwrap();
+
+        assert_eq!(
+            blocks,
+            vec![
+                TokenBlock::new(
+                    "@Test".to_string(),
+                    vec![
+                        LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 5),
+                        LexerToken::new("{".to_string(), TokenType::StartExpression, 0, 6),
+                        LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 7),
+                        LexerToken::new("5".to_string(), TokenType::Number, 0, 8),
+                        LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 9),
+                        LexerToken::new("+".to_string(), TokenType::PlusSign, 0, 10),
+                        LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 11),
+                        LexerToken::new("5".to_string(), TokenType::Number, 0, 12),
+                        LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 13),
+                        LexerToken::new("}".to_string(), TokenType::EndExpression, 0, 14),
                     ]
                 )
             ]
