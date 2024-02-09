@@ -81,9 +81,7 @@ impl Collector {
         Self { sinks }
     }
 
-    pub fn collect_tokens(&self, input: &str) -> Result<Vec<TokenBlock>, String> {
-        let tokens = lex(input)?;
-
+    pub fn collect_tokens(&self, tokens: &Vec<LexerToken>) -> Result<Vec<TokenBlock>, String> {
         let mut blocks = vec![];
         let mut annotations_stack: Vec<CollectionData> = vec![];
         let mut current_nest_level = 1; // start at 1, reserving 0 for root info in case its needed
@@ -135,12 +133,12 @@ impl Collector {
                     },
                 },
                 Some(CollectionData {
-                    sink,
-                    block,
-                    nest_level,
-                    count,
-                    ended,
-                }) => {
+                         sink,
+                         block,
+                         nest_level,
+                         count,
+                         ended,
+                     }) => {
                     if !sink
                         .ignore_for_end_condition_list
                         .contains(&token.get_token_type())
@@ -215,6 +213,11 @@ impl Collector {
 
         Ok(blocks)
     }
+
+    pub fn collect_tokens_from_input(&self, input: &str) -> Result<Vec<TokenBlock>, String> {
+        let tokens = lex(input)?;
+        self.collect_tokens(&tokens)
+    }
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
@@ -283,7 +286,7 @@ mod collecting {
         let input = "@Test 5";
         let collector = Collector::new(vec![Sink::new("@Test")]);
 
-        let blocks = collector.collect_tokens(input).unwrap();
+        let blocks = collector.collect_tokens_from_input(input).unwrap();
 
         assert_eq!(
             blocks,
@@ -302,7 +305,7 @@ mod collecting {
         let input = "@Test 5 + 5   \n   5 + 5";
         let collector = Collector::new(vec![Sink::new("@Test").newline()]);
 
-        let blocks = collector.collect_tokens(input).unwrap();
+        let blocks = collector.collect_tokens_from_input(input).unwrap();
 
         assert_eq!(
             blocks,
@@ -335,7 +338,7 @@ mod collecting {
         let input = "@Test 5 + 5 + 5 + 5 + 5";
         let collector = Collector::new(vec![Sink::new("@Test").count(5)]);
 
-        let blocks = collector.collect_tokens(input).unwrap();
+        let blocks = collector.collect_tokens_from_input(input).unwrap();
 
         assert_eq!(
             blocks,
@@ -379,7 +382,7 @@ mod collecting {
             Sink::new("@Test").until_token(TokenType::EndExpression)
         ]);
 
-        let blocks = collector.collect_tokens(input).unwrap();
+        let blocks = collector.collect_tokens_from_input(input).unwrap();
 
         assert_eq!(
             blocks,
@@ -421,7 +424,7 @@ mod collecting {
             Sink::new("@Test").until_token(TokenType::Subexpression)
         ]);
 
-        let blocks = collector.collect_tokens(input).unwrap();
+        let blocks = collector.collect_tokens_from_input(input).unwrap();
 
         assert_eq!(
             blocks,
@@ -452,7 +455,7 @@ mod collecting {
             Sink::new("@Test").until_token(TokenType::EndExpression)
         ]);
 
-        let blocks = collector.collect_tokens(input).unwrap();
+        let blocks = collector.collect_tokens_from_input(input).unwrap();
 
         assert_eq!(
             blocks,
@@ -481,7 +484,7 @@ mod collecting {
         let input = "@Test 5 + 5 @End 5 + 5";
         let collector = Collector::new(vec![Sink::new("@Test").until_annotation("@End")]);
 
-        let blocks = collector.collect_tokens(input).unwrap();
+        let blocks = collector.collect_tokens_from_input(input).unwrap();
 
         assert_eq!(
             blocks,
@@ -522,7 +525,7 @@ mod collecting {
             Sink::new("@Case").newline(),
         ]);
 
-        let blocks = collector.collect_tokens(input).unwrap();
+        let blocks = collector.collect_tokens_from_input(input).unwrap();
 
         assert_eq!(
             blocks,
@@ -570,7 +573,7 @@ mod collecting {
             Sink::new("@Case").newline(),
         ]);
 
-        let blocks = collector.collect_tokens(input).unwrap();
+        let blocks = collector.collect_tokens_from_input(input).unwrap();
 
         assert_eq!(
             blocks,
