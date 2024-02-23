@@ -6,5 +6,5 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-garnish_traits = { path = "../garnish-core/traits" }
+garnish_lang_traits = { path = "../garnish-core/traits" }
 garnish_lang_compiler = { path = "../garnish-core/compiler" }
