@@ -1,10 +1,17 @@
 [package]
-name = "garnish_annotations_collector"
-version = "0.1.0"
+name = "garnish_lang_annotations_collector"
+description = "Utility to organize garnish annotations with related tokens."
+version = "0.2.0"
+authors = ["Chad Collins <chad.collins@capitalone.com>"]
 edition = "2021"
+homepage = "https://github.com/garnish-lang/garnish-annotation-collector"
+documentation = "https://github.com/garnish-lang/garnish-annotation-collector"
+repository = "https://github.com/garnish-lang/garnish-annotation-collector"
+license-file = "./LICENSE"
+readme = "./README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-garnish_lang_traits = { path = "../garnish-core/traits" }
-garnish_lang_compiler = { path = "../garnish-core/compiler" }
+garnish_lang_traits = { version = "0.0.2-alpha", path = "../garnish-core/traits" }
+garnish_lang_compiler = { version = "0.0.2-alpha", path = "../garnish-core/compiler" }
