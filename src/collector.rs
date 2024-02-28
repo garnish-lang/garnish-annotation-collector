@@ -1,4 +1,4 @@
-use garnish_lang_compiler::{lex, LexerToken, TokenType};
+use garnish_lang_compiler::lex::{lex, LexerToken, TokenType};
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 enum EndCondition {
