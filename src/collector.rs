@@ -37,18 +37,8 @@ impl PartParser {
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
-enum EndCondition {
-    Lone,
-    UntilNewline, // separate from Until because a newline in a Whitespace token needs a specific check
-    Count(usize),
-    UntilToken(TokenType),
-    UntilAnnotation(String),
-}
-
-#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct Sink {
     annotation_text: String,
-    end_condition: EndCondition,
     ignore_for_end_condition_list: Vec<TokenType>,
     part_parsers: Vec<PartParser>,
 }
@@ -57,35 +47,9 @@ impl Sink {
     pub fn new<T: ToString>(annotation_text: T) -> Self {
         Self {
             annotation_text: annotation_text.to_string(),
-            end_condition: EndCondition::Lone,
             ignore_for_end_condition_list: vec![TokenType::Whitespace],
             part_parsers: vec![],
         }
-    }
-
-    pub fn count(mut self, count: usize) -> Self {
-        self.end_condition = EndCondition::Count(count);
-        self
-    }
-
-    pub fn until_token(mut self, token_type: TokenType) -> Self {
-        self.end_condition = EndCondition::UntilToken(token_type);
-        self
-    }
-
-    pub fn until_annotation<T: ToString>(mut self, annotation: T) -> Self {
-        self.end_condition = EndCondition::UntilAnnotation(annotation.to_string());
-        self
-    }
-
-    pub fn newline(mut self) -> Self {
-        self.end_condition = EndCondition::UntilNewline;
-        self
-    }
-
-    pub fn ignore(mut self, tokens: Vec<TokenType>) -> Self {
-        self.ignore_for_end_condition_list = tokens;
-        self
     }
 
     pub fn part(mut self, part_parser: PartParser) -> Self {
@@ -390,7 +354,6 @@ mod collecting {
     fn newline() {
         let input = "@Test 5 + 5   \n   5 + 5";
         let collector = Collector::new(vec![Sink::new("@Test")
-            .newline()
             .part(PartParser::new(PartBehavior::UntilNewline))]);
 
         let blocks = collector.collect_tokens_from_input(input).unwrap();
