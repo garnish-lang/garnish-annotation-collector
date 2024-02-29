@@ -12,7 +12,6 @@ pub enum PartBehavior {
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct PartParser {
     behavior: PartBehavior,
-    ignore_tokens: Vec<TokenType>,
     trim_tokens: Vec<TokenType>,
 }
 
@@ -20,19 +19,8 @@ impl PartParser {
     pub fn new(behavior: PartBehavior) -> Self {
         PartParser {
             behavior,
-            ignore_tokens: vec![],
             trim_tokens: vec![],
         }
-    }
-
-    pub fn ignore_token(mut self, token: TokenType) -> Self {
-        self.ignore_tokens.push(token);
-        self
-    }
-
-    pub fn ignore_tokens(mut self, mut tokens: Vec<TokenType>) -> Self {
-        self.ignore_tokens.append(&mut tokens);
-        self
     }
 }
 
@@ -150,7 +138,7 @@ impl Collector {
                     match sink.part_parsers.get(*current_part) {
                         None => {}
                         Some(parser) => {
-                            if !parser.ignore_tokens.contains(&token.get_token_type()) {
+                            if token.get_token_type() != TokenType::Whitespace {
                                 *count += 1;
                             }
 
@@ -351,10 +339,36 @@ mod collecting {
     }
 
     #[test]
+    fn two_parts() {
+        let input = "@Test name 5";
+        let collector = Collector::new(vec![Sink::new("@Test")
+            .part(PartParser::new(PartBehavior::TokenCount(1)))
+            .part(PartParser::new(PartBehavior::UntilNewline))]);
+
+        let blocks = collector.collect_tokens_from_input(input).unwrap();
+
+        assert_eq!(
+            blocks,
+            vec![TokenBlock::new_with_parts(
+                "@Test".to_string(),
+                vec![],
+                vec![vec![
+                    LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 5),
+                    LexerToken::new("name".to_string(), TokenType::Identifier, 0, 6),
+                ],vec![
+                    LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 10),
+                    LexerToken::new("5".to_string(), TokenType::Number, 0, 11),
+                ]]
+            ),]
+        );
+    }
+
+    #[test]
     fn newline() {
         let input = "@Test 5 + 5   \n   5 + 5";
-        let collector = Collector::new(vec![Sink::new("@Test")
-            .part(PartParser::new(PartBehavior::UntilNewline))]);
+        let collector = Collector::new(vec![
+            Sink::new("@Test").part(PartParser::new(PartBehavior::UntilNewline))
+        ]);
 
         let blocks = collector.collect_tokens_from_input(input).unwrap();
 
@@ -393,7 +407,7 @@ mod collecting {
     fn with_5_tokens_ignoring_white_space() {
         let input = "@Test 5 + 5 + 5 + 5 + 5";
         let collector = Collector::new(vec![Sink::new("@Test").part(
-            PartParser::new(PartBehavior::TokenCount(5)).ignore_token(TokenType::Whitespace),
+            PartParser::new(PartBehavior::TokenCount(5)),
         )]);
 
         let blocks = collector.collect_tokens_from_input(input).unwrap();
@@ -512,7 +526,6 @@ mod collecting {
         let input = "@Test {5,{5+5},5}";
         let collector = Collector::new(vec![Sink::new("@Test").part(
             PartParser::new(PartBehavior::UntilToken(TokenType::EndExpression))
-                .ignore_token(TokenType::Whitespace),
         )]);
 
         let blocks = collector.collect_tokens_from_input(input).unwrap();
