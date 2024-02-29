@@ -97,7 +97,6 @@ impl Sink {
 struct CollectionData<'a> {
     sink: &'a Sink,
     block: TokenBlock,
-    nest_level: usize,
     count: usize,
     ended: bool,
     current_part: usize,
@@ -105,11 +104,10 @@ struct CollectionData<'a> {
 }
 
 impl<'a> CollectionData<'a> {
-    fn new(sink: &'a Sink, block: TokenBlock, nest_level: usize) -> Self {
+    fn new(sink: &'a Sink, block: TokenBlock) -> Self {
         Self {
             sink,
             block,
-            nest_level,
             count: 0,
             ended: false,
             current_part: 0,
@@ -129,7 +127,7 @@ impl Collector {
     }
 
     pub fn collect_tokens(&self, tokens: &Vec<LexerToken>) -> Result<Vec<TokenBlock>, String> {
-        let mut blocks = vec![];
+        let mut blocks: Vec<TokenBlock> = vec![];
         let mut annotations_stack: Vec<CollectionData> = vec![];
         let mut current_nest_level = 1; // start at 1, reserving 0 for root info in case its needed
 
@@ -152,14 +150,13 @@ impl Collector {
                             .find(|item| &item.annotation_text == token.get_text())
                         {
                             None => (), // No sink for annotation, leave be
-                            Some(sink) => match sink.end_condition {
-                                EndCondition::Lone => blocks
+                            Some(sink) => match sink.part_parsers.len() {
+                                0 => blocks
                                     .push(TokenBlock::with_annotation(token.get_text().clone())),
                                 _ => {
                                     annotations_stack.push(CollectionData::new(
                                         sink,
                                         TokenBlock::with_annotation(token.get_text().clone()),
-                                        current_nest_level,
                                     ));
                                 }
                             },
@@ -181,7 +178,6 @@ impl Collector {
                 Some(CollectionData {
                     sink,
                     block,
-                    nest_level,
                     count,
                     ended,
                     current_part,
@@ -190,8 +186,20 @@ impl Collector {
                     match sink.part_parsers.get(*current_part) {
                         None => {}
                         Some(parser) => {
-                            let part_ended = match parser.behavior {
+                            if !parser.ignore_tokens.contains(&token.get_token_type()) {
+                                *count += 1;
+                            }
+
+                            let part_ended = match &parser.behavior {
                                 PartBehavior::UntilNewline => token.get_text().contains("\n"),
+                                PartBehavior::TokenCount(max) => *count >= *max,
+                                PartBehavior::UntilToken(t) => {
+                                    t == &token.get_token_type() && current_nest_level <= 1
+                                }
+                                PartBehavior::UntilAnnotation(annotation) => {
+                                    token.get_token_type() == TokenType::Annotation
+                                        && token.get_text().trim_start_matches('@') == annotation
+                                }
                                 _ => unimplemented!(),
                             };
 
@@ -207,8 +215,8 @@ impl Collector {
                                         current_part_tokens.push(token.clone());
                                         None
                                     }
-                                    Some(sink) => match sink.end_condition {
-                                        EndCondition::Lone => {
+                                    Some(sink) => match sink.part_parsers.len() {
+                                        0 => {
                                             blocks.push(TokenBlock::with_annotation(
                                                 token.get_text().clone(),
                                             ));
@@ -237,7 +245,6 @@ impl Collector {
                                     annotations_stack.push(CollectionData::new(
                                         sink,
                                         TokenBlock::with_annotation(token.get_text().clone()),
-                                        current_nest_level,
                                     ));
                                 }
                             }
@@ -257,71 +264,16 @@ impl Collector {
                             }
                         }
                     }
-
-                    // if !sink
-                    //     .ignore_for_end_condition_list
-                    //     .contains(&token.get_token_type())
-                    // {
-                    //     *count += 1;
-                    // }
-                    //
-                    // *ended = match &sink.end_condition {
-                    //     EndCondition::Lone => unreachable!(), // never added to stack
-                    //     EndCondition::Count(desired_count) => count == desired_count, // info.non_ignored_token_count >= count,
-                    //     EndCondition::UntilToken(token_type) => {
-                    //         token_type == &token.get_token_type()
-                    //             && nest_level == &current_nest_level
-                    //     }
-                    //     EndCondition::UntilNewline => token.get_text().contains("\n"),
-                    //     EndCondition::UntilAnnotation(annotation) => {
-                    //         token.get_token_type() == TokenType::Annotation
-                    //             && token.get_text() == annotation
-                    //     }
-                    // };
-                    //
-                    // // Don't add nested annotations to tokens if we have a sink for it
-                    // match token.get_token_type() {
-                    //     TokenType::Annotation => match self
-                    //         .sinks
-                    //         .iter()
-                    //         .find(|item| &item.annotation_text == token.get_text())
-                    //     {
-                    //         // No sink for annotation, add to tokens
-                    //         None => block.tokens.push(token.clone()),
-                    //         Some(sink) => match sink.end_condition {
-                    //             EndCondition::Lone => blocks
-                    //                 .push(TokenBlock::with_annotation(token.get_text().clone())),
-                    //             _ => {
-                    //                 annotations_stack.push(CollectionData::new(
-                    //                     sink,
-                    //                     TokenBlock::with_annotation(token.get_text().clone()),
-                    //                     current_nest_level,
-                    //                 ));
-                    //             }
-                    //         },
-                    //     },
-                    //     _ => block.tokens.push(token.clone()),
-                    // }
-                    //
-                    // // Possible to have multiple ended blocks in stack
-                    // // loop until all have been popped
-                    // while annotations_stack
-                    //     .last()
-                    //     .and_then(|b| Some(b.ended))
-                    //     .unwrap_or(false)
-                    // {
-                    //     let data = annotations_stack.pop().unwrap(); // has to exist to get to this branch
-                    //     match annotations_stack.last_mut() {
-                    //         None => blocks.push(data.block),
-                    //         Some(parent) => parent.block.nested.push(data.block),
-                    //     }
-                    // }
                 }
             }
         }
 
         // End all blocks with end of input
-        while let Some(data) = annotations_stack.pop() {
+        while let Some(mut data) = annotations_stack.pop() {
+            if data.current_part < data.sink.part_parsers.len() {
+                data.block.parts.push(data.current_part_tokens.clone());
+                data.current_part += 1;
+            }
             match annotations_stack.last_mut() {
                 None => blocks.push(data.block),
                 Some(parent) => parent.block.nested.push(data.block),
@@ -477,16 +429,19 @@ mod collecting {
     #[test]
     fn with_5_tokens_ignoring_white_space() {
         let input = "@Test 5 + 5 + 5 + 5 + 5";
-        let collector = Collector::new(vec![Sink::new("@Test").count(5)]);
+        let collector = Collector::new(vec![Sink::new("@Test").part(
+            PartParser::new(PartBehavior::TokenCount(5)).ignore_token(TokenType::Whitespace),
+        )]);
 
         let blocks = collector.collect_tokens_from_input(input).unwrap();
 
         assert_eq!(
             blocks,
             vec![
-                TokenBlock::new(
+                TokenBlock::new_with_parts(
                     "@Test".to_string(),
-                    vec![
+                    vec![],
+                    vec![vec![
                         LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 5),
                         LexerToken::new("5".to_string(), TokenType::Number, 0, 6),
                         LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 7),
@@ -497,7 +452,7 @@ mod collecting {
                         LexerToken::new("+".to_string(), TokenType::PlusSign, 0, 12),
                         LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 13),
                         LexerToken::new("5".to_string(), TokenType::Number, 0, 14),
-                    ]
+                    ]]
                 ),
                 TokenBlock::new(
                     "".to_string(),
@@ -519,18 +474,19 @@ mod collecting {
     #[test]
     fn until_token() {
         let input = "@Test { 5 + 5 } 5 + 5";
-        let collector = Collector::new(vec![
-            Sink::new("@Test").until_token(TokenType::EndExpression)
-        ]);
+        let collector = Collector::new(vec![Sink::new("@Test").part(PartParser::new(
+            PartBehavior::UntilToken(TokenType::EndExpression),
+        ))]);
 
         let blocks = collector.collect_tokens_from_input(input).unwrap();
 
         assert_eq!(
             blocks,
             vec![
-                TokenBlock::new(
+                TokenBlock::new_with_parts(
                     "@Test".to_string(),
-                    vec![
+                    vec![],
+                    vec![vec![
                         LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 5),
                         LexerToken::new("{".to_string(), TokenType::StartExpression, 0, 6),
                         LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 7),
@@ -541,7 +497,7 @@ mod collecting {
                         LexerToken::new("5".to_string(), TokenType::Number, 0, 12),
                         LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 13),
                         LexerToken::new("}".to_string(), TokenType::EndExpression, 0, 14),
-                    ]
+                    ]]
                 ),
                 TokenBlock::new(
                     "".to_string(),
@@ -561,17 +517,18 @@ mod collecting {
     #[test]
     fn unfinished_block_ended_with_end_of_input() {
         let input = "@Test { 5 + 5 }";
-        let collector = Collector::new(vec![
-            Sink::new("@Test").until_token(TokenType::Subexpression)
-        ]);
+        let collector = Collector::new(vec![Sink::new("@Test").part(PartParser::new(
+            PartBehavior::UntilToken(TokenType::EndExpression),
+        ))]);
 
         let blocks = collector.collect_tokens_from_input(input).unwrap();
 
         assert_eq!(
             blocks,
-            vec![TokenBlock::new(
+            vec![TokenBlock::new_with_parts(
                 "@Test".to_string(),
-                vec![
+                vec![],
+                vec![vec![
                     LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 5),
                     LexerToken::new("{".to_string(), TokenType::StartExpression, 0, 6),
                     LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 7),
@@ -582,7 +539,7 @@ mod collecting {
                     LexerToken::new("5".to_string(), TokenType::Number, 0, 12),
                     LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 13),
                     LexerToken::new("}".to_string(), TokenType::EndExpression, 0, 14),
-                ]
+                ]]
             )]
         );
     }
@@ -590,17 +547,19 @@ mod collecting {
     #[test]
     fn until_token_ignores_nested_matching_tokens() {
         let input = "@Test {5,{5+5},5}";
-        let collector = Collector::new(vec![
-            Sink::new("@Test").until_token(TokenType::EndExpression)
-        ]);
+        let collector = Collector::new(vec![Sink::new("@Test").part(
+            PartParser::new(PartBehavior::UntilToken(TokenType::EndExpression))
+                .ignore_token(TokenType::Whitespace),
+        )]);
 
         let blocks = collector.collect_tokens_from_input(input).unwrap();
 
         assert_eq!(
             blocks,
-            vec![TokenBlock::new(
+            vec![TokenBlock::new_with_parts(
                 "@Test".to_string(),
-                vec![
+                vec![],
+                vec![vec![
                     LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 5),
                     LexerToken::new("{".to_string(), TokenType::StartExpression, 0, 6),
                     LexerToken::new("5".to_string(), TokenType::Number, 0, 7),
@@ -613,7 +572,7 @@ mod collecting {
                     LexerToken::new(",".to_string(), TokenType::Comma, 0, 14),
                     LexerToken::new("5".to_string(), TokenType::Number, 0, 15),
                     LexerToken::new("}".to_string(), TokenType::EndExpression, 0, 16),
-                ]
+                ]]
             )]
         );
     }
@@ -621,16 +580,19 @@ mod collecting {
     #[test]
     fn until_annotation() {
         let input = "@Test 5 + 5 @End 5 + 5";
-        let collector = Collector::new(vec![Sink::new("@Test").until_annotation("@End")]);
+        let collector = Collector::new(vec![Sink::new("@Test").part(PartParser::new(
+            PartBehavior::UntilAnnotation("End".to_string()),
+        ))]);
 
         let blocks = collector.collect_tokens_from_input(input).unwrap();
 
         assert_eq!(
             blocks,
             vec![
-                TokenBlock::new(
+                TokenBlock::new_with_parts(
                     "@Test".to_string(),
-                    vec![
+                    vec![],
+                    vec![vec![
                         LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 5),
                         LexerToken::new("5".to_string(), TokenType::Number, 0, 6),
                         LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 7),
@@ -639,7 +601,7 @@ mod collecting {
                         LexerToken::new("5".to_string(), TokenType::Number, 0, 10),
                         LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 11),
                         LexerToken::new("@End".to_string(), TokenType::Annotation, 0, 12),
-                    ]
+                    ]]
                 ),
                 TokenBlock::new(
                     "".to_string(),
@@ -660,101 +622,52 @@ mod collecting {
     fn with_children() {
         let input = "@Test 5+5\n@Case 10+10\n@Case 20+20\n@End";
         let collector = Collector::new(vec![
-            Sink::new("@Test").until_annotation("@End"),
-            Sink::new("@Case").newline(),
+            Sink::new("@Test").part(PartParser::new(PartBehavior::UntilAnnotation(
+                "End".to_string(),
+            ))),
+            Sink::new("@Case").part(PartParser::new(PartBehavior::UntilNewline)),
         ]);
 
         let blocks = collector.collect_tokens_from_input(input).unwrap();
 
         assert_eq!(
             blocks,
-            vec![TokenBlock::new(
+            vec![TokenBlock::new_with_parts(
                 "@Test".to_string(),
-                vec![
+                vec![],
+                vec![vec![
                     LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 5),
                     LexerToken::new("5".to_string(), TokenType::Number, 0, 6),
                     LexerToken::new("+".to_string(), TokenType::PlusSign, 0, 7),
                     LexerToken::new("5".to_string(), TokenType::Number, 0, 8),
                     LexerToken::new("\n".to_string(), TokenType::Whitespace, 0, 9),
                     LexerToken::new("@End".to_string(), TokenType::Annotation, 3, 0),
-                ]
+                ]]
             )
             .and_children(vec![
-                TokenBlock::new(
+                TokenBlock::new_with_parts(
                     "@Case".to_string(),
-                    vec![
+                    vec![],
+                    vec![vec![
                         LexerToken::new(" ".to_string(), TokenType::Whitespace, 1, 5),
                         LexerToken::new("10".to_string(), TokenType::Number, 1, 6),
                         LexerToken::new("+".to_string(), TokenType::PlusSign, 1, 8),
                         LexerToken::new("10".to_string(), TokenType::Number, 1, 9),
                         LexerToken::new("\n".to_string(), TokenType::Whitespace, 1, 11),
-                    ]
+                    ]]
                 ),
-                TokenBlock::new(
+                TokenBlock::new_with_parts(
                     "@Case".to_string(),
-                    vec![
+                    vec![],
+                    vec![vec![
                         LexerToken::new(" ".to_string(), TokenType::Whitespace, 2, 5),
                         LexerToken::new("20".to_string(), TokenType::Number, 2, 6),
                         LexerToken::new("+".to_string(), TokenType::PlusSign, 2, 8),
                         LexerToken::new("20".to_string(), TokenType::Number, 2, 9),
                         LexerToken::new("\n".to_string(), TokenType::Whitespace, 2, 11),
-                    ]
+                    ]]
                 )
             ]),]
-        );
-    }
-
-    #[test]
-    fn child_annotations_count_as_one_for_count_condition() {
-        let input = "@Test 5+5\n@Case 10+10\n@Case 20+20\n5+5";
-        let collector = Collector::new(vec![
-            Sink::new("@Test").count(5),
-            Sink::new("@Case").newline(),
-        ]);
-
-        let blocks = collector.collect_tokens_from_input(input).unwrap();
-
-        assert_eq!(
-            blocks,
-            vec![
-                TokenBlock::new(
-                    "@Test".to_string(),
-                    vec![
-                        LexerToken::new(" ".to_string(), TokenType::Whitespace, 0, 5),
-                        LexerToken::new("5".to_string(), TokenType::Number, 0, 6),
-                        LexerToken::new("+".to_string(), TokenType::PlusSign, 0, 7),
-                        LexerToken::new("5".to_string(), TokenType::Number, 0, 8),
-                        LexerToken::new("\n".to_string(), TokenType::Whitespace, 0, 9),
-                    ]
-                )
-                .and_children(vec![
-                    TokenBlock::new(
-                        "@Case".to_string(),
-                        vec![
-                            LexerToken::new(" ".to_string(), TokenType::Whitespace, 1, 5),
-                            LexerToken::new("10".to_string(), TokenType::Number, 1, 6),
-                            LexerToken::new("+".to_string(), TokenType::PlusSign, 1, 8),
-                            LexerToken::new("10".to_string(), TokenType::Number, 1, 9),
-                            LexerToken::new("\n".to_string(), TokenType::Whitespace, 1, 11),
-                        ]
-                    ),
-                    TokenBlock::new(
-                        "@Case".to_string(),
-                        vec![
-                            LexerToken::new(" ".to_string(), TokenType::Whitespace, 2, 5),
-                            LexerToken::new("20".to_string(), TokenType::Number, 2, 6),
-                            LexerToken::new("+".to_string(), TokenType::PlusSign, 2, 8),
-                            LexerToken::new("20".to_string(), TokenType::Number, 2, 9),
-                            LexerToken::new("\n".to_string(), TokenType::Whitespace, 2, 11),
-                        ]
-                    )
-                ]),
-                TokenBlock::with_tokens(vec![
-                    LexerToken::new("5".to_string(), TokenType::Number, 3, 0),
-                    LexerToken::new("+".to_string(), TokenType::PlusSign, 3, 1),
-                    LexerToken::new("5".to_string(), TokenType::Number, 3, 2),
-                ])
-            ]
         );
     }
 }
