@@ -669,8 +669,6 @@ mod collecting {
 
         let blocks = collector.collect_tokens_from_input(input).unwrap();
 
-        let nested = blocks.get(0).unwrap().blocks();
-
         assert_eq!(
             blocks,
             vec![TokenBlock::new_with_parts(
