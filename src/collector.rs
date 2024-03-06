@@ -315,6 +315,10 @@ impl TokenBlock {
     pub fn tokens_owned(self) -> Vec<LexerToken> {
         self.tokens
     }
+
+    pub fn parts(&self) -> &Vec<Vec<LexerToken>> {
+        &self.parts
+    }
 }
 
 #[cfg(test)]
