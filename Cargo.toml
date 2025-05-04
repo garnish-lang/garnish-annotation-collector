@@ -1,7 +1,7 @@
 [package]
 name = "garnish_lang_annotations_collector"
 description = "Utility to organize garnish annotations with related tokens."
-version = "0.12.0"
+version = "0.13.0"
 authors = ["Chad Collins <chad.collins@capitalone.com>"]
 edition = "2021"
 homepage = "https://github.com/garnish-lang/garnish-annotation-collector"
