@@ -2,7 +2,7 @@
 name = "garnish_lang_annotations_collector"
 description = "Utility to organize garnish annotations with related tokens."
 version = "0.13.0"
-authors = ["Chad Collins <chad.collins@capitalone.com>"]
+authors = ["Chad Collins <chadrcollins91@gmail.com>"]
 edition = "2021"
 homepage = "https://github.com/garnish-lang/garnish-annotation-collector"
 documentation = "https://github.com/garnish-lang/garnish-annotation-collector"
